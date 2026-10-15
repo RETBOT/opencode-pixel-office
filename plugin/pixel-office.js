@@ -150,6 +150,32 @@ const translateV2Event = (event, sessionMeta = new Map()) => {
       return [];
     }
 
+    // The user's prompt was queued: surface it as the "boss message".
+    case "session.inbox.enqueued": {
+      const item = data.item || {};
+      const text = item.type === "user" ? item.payload?.text || "" : "";
+      if (!text) {
+        return [];
+      }
+      const messageID = data.inboxID || `${sessionID}:user`;
+      return [
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            info: { role: "user", sessionID },
+            part: {
+              id: `${messageID}:user`,
+              messageID,
+              sessionID,
+              type: "user",
+              text,
+            },
+          },
+        },
+      ];
+    }
+
     default:
       return [];
   }

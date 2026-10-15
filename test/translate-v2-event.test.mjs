@@ -109,3 +109,29 @@ test("session.tool.called without cached agent defaults to 'opencode'", () => {
   );
   assert.equal(out[0].properties.info.agent, "opencode");
 });
+
+test("session.inbox.enqueued (user) -> message.part.updated as boss message", () => {
+  const out = translateV2Event({
+    type: "session.inbox.enqueued",
+    data: { sessionID: "s1", inboxID: "msg1", item: { type: "user", payload: { text: "hello boss", files: [], agents: [] } } },
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].type, "message.part.updated");
+  assert.equal(out[0].properties.info.role, "user");
+  assert.equal(out[0].properties.part.messageID, "msg1");
+  assert.equal(out[0].properties.part.text, "hello boss");
+});
+
+test("session.inbox.enqueued non-user item is dropped", () => {
+  assert.deepEqual(
+    translateV2Event({ type: "session.inbox.enqueued", data: { sessionID: "s1", inboxID: "msg1", item: { type: "system", payload: { text: "x" } } } }),
+    [],
+  );
+});
+
+test("session.inbox.enqueued with empty text is dropped", () => {
+  assert.deepEqual(
+    translateV2Event({ type: "session.inbox.enqueued", data: { sessionID: "s1", item: { type: "user", payload: { text: "" } } } }),
+    [],
+  );
+});
