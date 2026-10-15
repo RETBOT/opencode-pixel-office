@@ -1,0 +1,85 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { translateV2Event } from "../plugin/pixel-office.js";
+
+test("session.step.started -> tool.execute.before with agent and model", () => {
+  const out = translateV2Event({
+    type: "session.step.started",
+    data: { sessionID: "s1", agent: "build", model: { id: "gpt-5", providerID: "openai" } },
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].type, "tool.execute.before");
+  assert.equal(out[0].properties.sessionID, "s1");
+  assert.equal(out[0].properties.info.agent, "build");
+  assert.equal(out[0].properties.info.model.modelID, "gpt-5");
+  assert.equal(out[0].properties.info.model.providerID, "openai");
+});
+
+test("session.step.started without agent falls back to 'opencode'", () => {
+  const out = translateV2Event({ type: "session.step.started", data: { sessionID: "s1" } });
+  assert.equal(out[0].properties.info.agent, "opencode");
+});
+
+test("session.tool.called -> tool.execute.before carrying tool name", () => {
+  const out = translateV2Event({
+    type: "session.tool.called",
+    data: { sessionID: "s1", assistantMessageID: "m1", id: "t1", name: "bash", input: { cmd: "ls" } },
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].type, "tool.execute.before");
+  assert.equal(out[0].properties.tool.name, "bash");
+  assert.deepEqual(out[0].properties.tool.input, { cmd: "ls" });
+});
+
+test("session.tool.success -> tool.execute.after", () => {
+  const out = translateV2Event({
+    type: "session.tool.success",
+    data: { sessionID: "s1", assistantMessageID: "m1", id: "t1", content: [{ type: "text", text: "ok" }] },
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].type, "tool.execute.after");
+  assert.equal(out[0].properties.sessionID, "s1");
+});
+
+test("session.text.delta -> message.part.updated with text part", () => {
+  const out = translateV2Event({
+    type: "session.text.delta",
+    data: { sessionID: "s1", assistantMessageID: "m1", ordinal: 2, delta: "hello" },
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].type, "message.part.updated");
+  assert.equal(out[0].properties.part.type, "text");
+  assert.equal(out[0].properties.part.text, "hello");
+  assert.equal(out[0].properties.part.id, "m1:2");
+});
+
+test("session.reasoning.delta -> message.part.updated with reasoning part", () => {
+  const out = translateV2Event({
+    type: "session.reasoning.delta",
+    data: { sessionID: "s1", assistantMessageID: "m1", delta: "thinking" },
+  });
+  assert.equal(out[0].properties.part.type, "reasoning");
+});
+
+test("empty delta is dropped", () => {
+  assert.deepEqual(translateV2Event({ type: "session.text.delta", data: { sessionID: "s1", delta: "" } }), []);
+});
+
+test("session.step.ended with tool-calls finish emits nothing", () => {
+  assert.deepEqual(
+    translateV2Event({ type: "session.step.ended", data: { sessionID: "s1", finish: "tool-calls" } }),
+    [],
+  );
+});
+
+test("session.step.ended with a terminal finish -> session.idle", () => {
+  const out = translateV2Event({ type: "session.step.ended", data: { sessionID: "s1", finish: "stop" } });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].type, "session.idle");
+  assert.equal(out[0].properties.sessionID, "s1");
+});
+
+test("unknown event type maps to nothing", () => {
+  assert.deepEqual(translateV2Event({ type: "catalog.updated", data: {} }), []);
+  assert.deepEqual(translateV2Event({}), []);
+});
