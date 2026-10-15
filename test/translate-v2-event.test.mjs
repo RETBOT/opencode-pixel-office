@@ -83,3 +83,29 @@ test("unknown event type maps to nothing", () => {
   assert.deepEqual(translateV2Event({ type: "catalog.updated", data: {} }), []);
   assert.deepEqual(translateV2Event({}), []);
 });
+
+test("session.tool.called reuses agent/model cached from step.started (no phantom agent)", () => {
+  const meta = new Map();
+  translateV2Event(
+    {
+      type: "session.step.started",
+      data: { sessionID: "s1", agent: "build", model: { id: "gpt-5", providerID: "openai" } },
+    },
+    meta,
+  );
+  const out = translateV2Event(
+    { type: "session.tool.called", data: { sessionID: "s1", assistantMessageID: "m1", name: "bash" } },
+    meta,
+  );
+  assert.equal(out[0].properties.info.agent, "build");
+  assert.equal(out[0].properties.info.model.modelID, "gpt-5");
+  assert.equal(out[0].properties.info.model.providerID, "openai");
+});
+
+test("session.tool.called without cached agent defaults to 'opencode'", () => {
+  const out = translateV2Event(
+    { type: "session.tool.called", data: { sessionID: "s1", name: "bash" } },
+    new Map(),
+  );
+  assert.equal(out[0].properties.info.agent, "opencode");
+});

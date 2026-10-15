@@ -45,11 +45,26 @@ const post = async (endpoint, payload) => {
 // OpenCode 2.x emits a different event envelope ({ id, created, type, location, data })
 // and different event names than 1.x. The Pixel Office server still speaks the legacy
 // shape ({ type, properties }), so translate each V2 event into its closest V1 equivalent.
-const translateV2Event = (event) => {
+const translateV2Event = (event, sessionMeta = new Map()) => {
   const type = event?.type;
   const data = event?.data || {};
   const sessionID = data.sessionID || "";
   const messageInfo = { sessionID, id: data.assistantMessageID || "" };
+
+  // Only session.step.started carries the agent name + model. Cache them per session so later
+  // tool events reuse them; otherwise the server creates a phantom agent keyed by the bare
+  // session id (name "ses_...", model "unknown") alongside the real one.
+  if (type === "session.step.started" && sessionID && (data.agent || data.model)) {
+    sessionMeta.set(sessionID, { agent: data.agent, model: data.model });
+  }
+  const meta = sessionMeta.get(sessionID) || {};
+  const agentInfo = {
+    agent: meta.agent || "opencode",
+    model: {
+      modelID: meta.model?.id || "",
+      providerID: meta.model?.providerID || "",
+    },
+  };
 
   switch (type) {
     // A new agent step started: register/refresh the agent and mark it working.
@@ -80,7 +95,7 @@ const translateV2Event = (event) => {
           type: "tool.execute.before",
           properties: {
             sessionID,
-            info: messageInfo,
+            info: { ...messageInfo, ...agentInfo },
             tool: { name: data.name || "tool", input: data.input },
           },
         },
@@ -94,7 +109,7 @@ const translateV2Event = (event) => {
           type: "tool.execute.after",
           properties: {
             sessionID,
-            info: messageInfo,
+            info: { ...messageInfo, ...agentInfo },
             tool: { output: data.content },
           },
         },
@@ -147,6 +162,7 @@ const plugin = {
   async setup(ctx) {
     const endpoint = resolveEndpoint();
     const controller = new AbortController();
+    const sessionMeta = new Map();
 
     void (async () => {
       try {
@@ -154,7 +170,7 @@ const plugin = {
           if (!event || !event.type) {
             continue;
           }
-          for (const mapped of translateV2Event(event)) {
+          for (const mapped of translateV2Event(event, sessionMeta)) {
             await post(endpoint, mapped);
           }
         }
