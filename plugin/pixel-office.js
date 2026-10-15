@@ -54,10 +54,17 @@ const translateV2Event = (event, sessionMeta = new Map()) => {
   // Only session.step.started carries the agent name + model. Cache them per session so later
   // tool events reuse them; otherwise the server creates a phantom agent keyed by the bare
   // session id (name "ses_...", model "unknown") alongside the real one.
+  const prev = sessionMeta.get(sessionID) || {};
   if (type === "session.step.started" && sessionID && (data.agent || data.model)) {
-    sessionMeta.set(sessionID, { agent: data.agent, model: data.model });
+    sessionMeta.set(sessionID, { ...prev, agent: data.agent, model: data.model });
+  }
+  // session.tool.input.started carries the tool name; session.tool.called does not. Cache the
+  // name by call id so tool events can report the real tool name.
+  if (type === "session.tool.input.started" && sessionID && data.id && data.name) {
+    sessionMeta.set(sessionID, { ...prev, tools: { ...(prev.tools || {}), [data.id]: data.name } });
   }
   const meta = sessionMeta.get(sessionID) || {};
+  const toolName = (data.id && meta.tools && meta.tools[data.id]) || data.name || "tool";
   const agentInfo = {
     agent: meta.agent || "opencode",
     model: {
@@ -69,7 +76,7 @@ const translateV2Event = (event, sessionMeta = new Map()) => {
   switch (type) {
     // A new agent step started: register/refresh the agent and mark it working.
     case "session.step.started": {
-      return [
+      const mapped = [
         {
           type: "tool.execute.before",
           properties: {
@@ -86,20 +93,42 @@ const translateV2Event = (event, sessionMeta = new Map()) => {
           },
         },
       ];
+      // Mission Log: V2 never emits session.created/updated, so synthesize one so the server
+      // registers the session (directory normalized to forward slashes for the UI).
+      const directory = event?.location?.directory || "";
+      if (directory) {
+        mapped.push({
+          type: "session.updated",
+          properties: {
+            info: {
+              id: sessionID,
+              directory: directory.replace(/\\/g, "/"),
+              title: "",
+              slug: "",
+            },
+          },
+        });
+      }
+      return mapped;
     }
 
     // A tool was invoked: "working" + tool name.
     case "session.tool.called": {
-      return [
+      const mapped = [
         {
           type: "tool.execute.before",
           properties: {
             sessionID,
             info: { ...messageInfo, ...agentInfo },
-            tool: { name: data.name || "tool", input: data.input },
+            tool: { name: toolName, input: data.input },
           },
         },
       ];
+      // Best effort Quest Log: surface the todo tool's list as a legacy todo.updated event.
+      if (/todo/i.test(toolName) && Array.isArray(data.input?.todos)) {
+        mapped.push({ type: "todo.updated", properties: { sessionID, todos: data.input.todos } });
+      }
+      return mapped;
     }
 
     // A tool finished: "thinking".

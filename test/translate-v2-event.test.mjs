@@ -135,3 +135,49 @@ test("session.inbox.enqueued with empty text is dropped", () => {
     [],
   );
 });
+
+test("session.step.started also emits session.updated for the Mission Log", () => {
+  const out = translateV2Event(
+    {
+      type: "session.step.started",
+      location: { directory: "C:\\repo\\app" },
+      data: { sessionID: "s1", agent: "quetzal", model: { id: "m1", providerID: "p" } },
+    },
+    new Map(),
+  );
+  const su = out.find((e) => e.type === "session.updated");
+  assert.ok(su);
+  assert.equal(su.properties.info.id, "s1");
+  assert.equal(su.properties.info.directory, "C:/repo/app");
+});
+
+test("session.tool.input.started caches the tool name for session.tool.called", () => {
+  const meta = new Map();
+  translateV2Event(
+    { type: "session.tool.input.started", data: { sessionID: "s1", id: "call_1", name: "bash" } },
+    meta,
+  );
+  const out = translateV2Event(
+    { type: "session.tool.called", data: { sessionID: "s1", id: "call_1", input: {} } },
+    meta,
+  );
+  assert.equal(out[0].properties.tool.name, "bash");
+});
+
+test("todo tool call also emits todo.updated (Quest Log)", () => {
+  const meta = new Map();
+  translateV2Event(
+    { type: "session.tool.input.started", data: { sessionID: "s1", id: "c1", name: "todowrite" } },
+    meta,
+  );
+  const out = translateV2Event(
+    {
+      type: "session.tool.called",
+      data: { sessionID: "s1", id: "c1", input: { todos: [{ content: "a", status: "pending", priority: "high" }] } },
+    },
+    meta,
+  );
+  const tu = out.find((e) => e.type === "todo.updated");
+  assert.ok(tu);
+  assert.equal(tu.properties.todos.length, 1);
+});
