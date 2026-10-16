@@ -144,10 +144,11 @@ const translateV2Event = (event, sessionMeta = new Map()) => {
     // A tool finished: "thinking". Drop it from the live tool list.
     case "session.tool.success": {
       const current = sessionMeta.get(sessionID);
+      const wasTracked = !!(current && current.tools && data.id && current.tools[data.id]);
       if (current && current.tools && data.id) {
         delete current.tools[data.id];
       }
-      return [
+      const mapped = [
         {
           type: "tool.execute.after",
           properties: {
@@ -156,8 +157,12 @@ const translateV2Event = (event, sessionMeta = new Map()) => {
             tool: { output: data.content },
           },
         },
-        { type: "todo.updated", properties: { sessionID, todos: runningToolTodos() } },
       ];
+      // Only refresh the Quest Log when this tool was actually listed there.
+      if (wasTracked) {
+        mapped.push({ type: "todo.updated", properties: { sessionID, todos: runningToolTodos() } });
+      }
+      return mapped;
     }
 
     // Streamed assistant text: message part update, drives the live snippet.
@@ -189,14 +194,19 @@ const translateV2Event = (event, sessionMeta = new Map()) => {
     // The turn finished: clear the live tool list and go idle.
     case "session.step.ended": {
       const current = sessionMeta.get(sessionID);
+      const hadTools = !!(current && current.tools && Object.keys(current.tools).length);
       if (current && current.tools) {
         current.tools = {};
       }
-      const cleared = [{ type: "todo.updated", properties: { sessionID, todos: [] } }];
+      const mapped = [];
       if (data.finish && data.finish !== "tool-calls") {
-        return [{ type: "session.idle", properties: { sessionID } }, ...cleared];
+        mapped.push({ type: "session.idle", properties: { sessionID } });
       }
-      return cleared;
+      // Only clear the Quest Log when tools were actually listed there.
+      if (hadTools) {
+        mapped.push({ type: "todo.updated", properties: { sessionID, todos: [] } });
+      }
+      return mapped;
     }
 
     // The user's prompt was queued: surface it as the "boss message".
