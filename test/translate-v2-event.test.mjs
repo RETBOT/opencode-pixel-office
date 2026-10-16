@@ -164,20 +164,22 @@ test("session.tool.input.started caches the tool name for session.tool.called", 
   assert.equal(out[0].properties.tool.name, "bash");
 });
 
-test("todo tool call also emits todo.updated (Quest Log)", () => {
+test("session.tool.input.started surfaces the live tool in the Quest Log", () => {
   const meta = new Map();
-  translateV2Event(
-    { type: "session.tool.input.started", data: { sessionID: "s1", id: "c1", name: "todowrite" } },
-    meta,
-  );
   const out = translateV2Event(
-    {
-      type: "session.tool.called",
-      data: { sessionID: "s1", id: "c1", input: { todos: [{ content: "a", status: "pending", priority: "high" }] } },
-    },
+    { type: "session.tool.input.started", data: { sessionID: "s1", id: "c1", name: "bash" } },
     meta,
   );
   const tu = out.find((e) => e.type === "todo.updated");
   assert.ok(tu);
-  assert.equal(tu.properties.todos.length, 1);
+  assert.deepEqual(tu.properties.todos, [{ id: "c1", content: "bash", status: "in_progress", priority: "" }]);
+});
+
+test("session.tool.success removes the tool from the Quest Log", () => {
+  const meta = new Map();
+  translateV2Event({ type: "session.tool.input.started", data: { sessionID: "s1", id: "c1", name: "bash" } }, meta);
+  const out = translateV2Event({ type: "session.tool.success", data: { sessionID: "s1", id: "c1", content: [] } }, meta);
+  const tu = out.find((e) => e.type === "todo.updated");
+  assert.ok(tu);
+  assert.deepEqual(tu.properties.todos, []);
 });

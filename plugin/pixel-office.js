@@ -72,6 +72,16 @@ const translateV2Event = (event, sessionMeta = new Map()) => {
       providerID: meta.model?.providerID || "",
     },
   };
+  // V2 does not expose todos, so the (repurposed) Quest Log lists the tools running live.
+  const runningToolTodos = () => {
+    const current = sessionMeta.get(sessionID) || {};
+    return Object.entries(current.tools || {}).map(([id, name]) => ({
+      id,
+      content: name,
+      status: "in_progress",
+      priority: "",
+    }));
+  };
 
   switch (type) {
     // A new agent step started: register/refresh the agent and mark it working.
@@ -114,7 +124,7 @@ const translateV2Event = (event, sessionMeta = new Map()) => {
 
     // A tool was invoked: "working" + tool name.
     case "session.tool.called": {
-      const mapped = [
+      return [
         {
           type: "tool.execute.before",
           properties: {
@@ -124,15 +134,19 @@ const translateV2Event = (event, sessionMeta = new Map()) => {
           },
         },
       ];
-      // Best effort Quest Log: surface the todo tool's list as a legacy todo.updated event.
-      if (/todo/i.test(toolName) && Array.isArray(data.input?.todos)) {
-        mapped.push({ type: "todo.updated", properties: { sessionID, todos: data.input.todos } });
-      }
-      return mapped;
     }
 
-    // A tool finished: "thinking".
+    // The tool name only arrives here: refresh the live tool list in the Quest Log.
+    case "session.tool.input.started": {
+      return [{ type: "todo.updated", properties: { sessionID, todos: runningToolTodos() } }];
+    }
+
+    // A tool finished: "thinking". Drop it from the live tool list.
     case "session.tool.success": {
+      const current = sessionMeta.get(sessionID);
+      if (current && current.tools && data.id) {
+        delete current.tools[data.id];
+      }
       return [
         {
           type: "tool.execute.after",
@@ -142,6 +156,7 @@ const translateV2Event = (event, sessionMeta = new Map()) => {
             tool: { output: data.content },
           },
         },
+        { type: "todo.updated", properties: { sessionID, todos: runningToolTodos() } },
       ];
     }
 
@@ -171,12 +186,17 @@ const translateV2Event = (event, sessionMeta = new Map()) => {
       ];
     }
 
-    // The turn finished with no pending tool calls: idle.
+    // The turn finished: clear the live tool list and go idle.
     case "session.step.ended": {
-      if (data.finish && data.finish !== "tool-calls") {
-        return [{ type: "session.idle", properties: { sessionID } }];
+      const current = sessionMeta.get(sessionID);
+      if (current && current.tools) {
+        current.tools = {};
       }
-      return [];
+      const cleared = [{ type: "todo.updated", properties: { sessionID, todos: [] } }];
+      if (data.finish && data.finish !== "tool-calls") {
+        return [{ type: "session.idle", properties: { sessionID } }, ...cleared];
+      }
+      return cleared;
     }
 
     // The user's prompt was queued: surface it as the "boss message".
